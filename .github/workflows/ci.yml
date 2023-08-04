@@ -36,6 +36,9 @@ jobs:
       - name: Check C formatting
         run: git ls-files -- '*.c' '*.h' | xargs clang-format --dry-run --Werror
 
+      - name: Prereqs
+        run: sudo apt-get install -y libelf-dev
+
       - run: taplo fmt --check
 
       - name: Check formatting
@@ -83,6 +86,13 @@ jobs:
       - uses: taiki-e/setup-cross-toolchain-action@v1
         with:
           target: ${{ matrix.arch }}
+
+      - name: Prereqs
+        run: |
+          target=${{ matrix.arch }}
+          target=${target/-unknown/}
+          target=${target/armv7/arm}
+          sudo apt-get install -y libelf-dev:$target
 
       - name: Build
         run: |
