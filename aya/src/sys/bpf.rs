@@ -126,6 +126,7 @@ pub(crate) struct EbpfLoadProgramAttrs<'a> {
     pub(crate) attach_btf_obj_fd: Option<BorrowedFd<'a>>,
     pub(crate) attach_btf_id: Option<u32>,
     pub(crate) attach_prog_fd: Option<BorrowedFd<'a>>,
+    pub(crate) attach_ifindex: Option<u32>,
     pub(crate) func_info_rec_size: usize,
     pub(crate) func_info: FuncSecInfo,
     pub(crate) line_info_rec_size: usize,
@@ -191,10 +192,13 @@ pub(crate) fn bpf_load_program(
     if let Some(v) = aya_attr.attach_prog_fd {
         u.__bindgen_anon_1.attach_prog_fd = v.as_raw_fd() as u32;
     }
-
     if let Some(v) = aya_attr.attach_btf_id {
         u.attach_btf_id = v;
     }
+    if let Some(v) = aya_attr.attach_ifindex {
+        u.prog_ifindex = v;
+    }
+
     bpf_prog_load(&mut attr)
 }
 

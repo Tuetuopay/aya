@@ -92,6 +92,23 @@ impl Xdp {
         load_program(bpf_prog_type::BPF_PROG_TYPE_XDP, &mut self.data)
     }
 
+    /// Loads the program inside the kernel, but on a specific interface.
+    ///
+    /// This might be required for hardware offloads to work, depending on the vendor. It is known
+    /// to be required for Netronome cards.
+    pub fn load_iface(&mut self, interface: &str) -> Result<(), ProgramError> {
+        // TODO: avoid this unwrap by adding a new error variant.
+        let c_interface = CString::new(interface).unwrap();
+        let if_index = unsafe { if_nametoindex(c_interface.as_ptr()) };
+        if if_index == 0 {
+            return Err(ProgramError::UnknownInterface {
+                name: interface.to_string(),
+            });
+        }
+        self.data.attach_ifindex = Some(if_index);
+        self.load()
+    }
+
     /// Attaches the program to the given `interface`.
     ///
     /// The returned value can be used to detach, see [Xdp::detach].
