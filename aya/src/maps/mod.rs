@@ -554,6 +554,7 @@ impl MapData {
         mut obj: obj::Map,
         name: &str,
         btf_fd: Option<BorrowedFd<'_>>,
+        attach_ifindex: Option<u32>,
     ) -> Result<Self, MapError> {
         let c_name = CString::new(name).map_err(|_| MapError::InvalidName { name: name.into() })?;
 
@@ -579,8 +580,8 @@ impl MapData {
         let kernel_version = KernelVersion::current().unwrap();
         #[cfg(test)]
         let kernel_version = KernelVersion::new(0xff, 0xff, 0xff);
-        let fd =
-            bpf_create_map(&c_name, &obj, btf_fd, kernel_version).map_err(|(code, io_error)| {
+        let fd = bpf_create_map(&c_name, &obj, btf_fd, kernel_version, attach_ifindex).map_err(
+            |(code, io_error)| {
                 if kernel_version < KernelVersion::new(5, 11, 0) {
                     maybe_warn_rlimit();
                 }
@@ -590,7 +591,8 @@ impl MapData {
                     code,
                     io_error,
                 }
-            })?;
+            },
+        )?;
         Ok(Self {
             obj,
             fd: MapFd::from_fd(fd),
@@ -602,6 +604,7 @@ impl MapData {
         obj: obj::Map,
         name: &str,
         btf_fd: Option<BorrowedFd<'_>>,
+        attach_ifindex: Option<u32>,
     ) -> Result<Self, MapError> {
         use std::os::unix::ffi::OsStrExt as _;
 
@@ -625,7 +628,7 @@ impl MapData {
                 fd: MapFd::from_fd(fd),
             }),
             Err(_) => {
-                let map = Self::create(obj, name, btf_fd)?;
+                let map = Self::create(obj, name, btf_fd, attach_ifindex)?;
                 map.pin(&path).map_err(|error| MapError::PinError {
                     name: Some(name.into()),
                     error,
@@ -967,7 +970,7 @@ mod test_utils {
             } => Ok(crate::MockableFd::mock_signed_fd().into()),
             call => panic!("unexpected syscall {:?}", call),
         });
-        MapData::create(obj, "foo", None).unwrap()
+        MapData::create(obj, "foo", None, None).unwrap()
     }
 
     pub(super) fn new_obj_map<K>(map_type: bpf_map_type) -> obj::Map {
@@ -1069,7 +1072,7 @@ mod tests {
         });
 
         assert_matches!(
-            MapData::create(new_obj_map(), "foo", None),
+            MapData::create(new_obj_map(), "foo", None, None),
             Ok(MapData {
                 obj: _,
                 fd,
@@ -1095,7 +1098,7 @@ mod tests {
             MapData::create(test_utils::new_obj_map_with_max_entries::<u32>(
                 crate::generated::bpf_map_type::BPF_MAP_TYPE_PERF_EVENT_ARRAY,
                 65535,
-            ), "foo", None),
+            ), "foo", None, None),
             Ok(MapData {
                 obj,
                 fd,
@@ -1110,7 +1113,7 @@ mod tests {
             MapData::create(test_utils::new_obj_map_with_max_entries::<u32>(
                 crate::generated::bpf_map_type::BPF_MAP_TYPE_PERF_EVENT_ARRAY,
                 0,
-            ), "foo", None),
+            ), "foo", None, None),
             Ok(MapData {
                 obj,
                 fd,
@@ -1125,7 +1128,7 @@ mod tests {
             MapData::create(test_utils::new_obj_map_with_max_entries::<u32>(
                 crate::generated::bpf_map_type::BPF_MAP_TYPE_PERF_EVENT_ARRAY,
                 1,
-            ), "foo", None),
+            ), "foo", None, None),
             Ok(MapData {
                 obj,
                 fd,
@@ -1168,7 +1171,7 @@ mod tests {
             _ => Err((-1, io::Error::from_raw_os_error(EFAULT))),
         });
 
-        let map_data = MapData::create(new_obj_map(), TEST_NAME, None).unwrap();
+        let map_data = MapData::create(new_obj_map(), TEST_NAME, None, None).unwrap();
         assert_eq!(TEST_NAME, map_data.info().unwrap().name_as_str().unwrap());
     }
 
@@ -1246,7 +1249,7 @@ mod tests {
         override_syscall(|_| Err((-42, io::Error::from_raw_os_error(EFAULT))));
 
         assert_matches!(
-            MapData::create(new_obj_map(), "foo", None),
+            MapData::create(new_obj_map(), "foo", None, None),
             Err(MapError::CreateError { name, code, io_error }) => {
                 assert_eq!(name, "foo");
                 assert_eq!(code, -42);

@@ -41,6 +41,7 @@ pub(crate) fn bpf_create_map(
     def: &obj::Map,
     btf_fd: Option<BorrowedFd<'_>>,
     kernel_version: KernelVersion,
+    attach_ifindex: Option<u32>,
 ) -> SysResult<crate::MockableFd> {
     let mut attr = unsafe { mem::zeroed::<bpf_attr>() };
 
@@ -92,6 +93,12 @@ pub(crate) fn bpf_create_map(
         let name_len = cmp::min(name.to_bytes().len(), BPF_OBJ_NAME_LEN - 1);
         u.map_name[..name_len]
             .copy_from_slice(unsafe { slice::from_raw_parts(name.as_ptr(), name_len) });
+    }
+
+    // Required for XDP hardware offload. When a program is loaded agains an interface, its maps
+    // also need to.
+    if let Some(index) = attach_ifindex {
+        u.map_ifindex = index;
     }
 
     // SAFETY: BPF_MAP_CREATE returns a new file descriptor.
@@ -919,6 +926,7 @@ pub(crate) fn is_bpf_global_data_supported() -> bool {
             data: Vec::new(),
         }),
         "aya_global",
+        None,
         None,
     );
 

@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
+    ffi::CString,
     fs, io,
     os::{
         fd::{AsFd as _, AsRawFd as _},
@@ -16,6 +17,7 @@ use aya_obj::{
     relocation::EbpfRelocationError,
     EbpfSectionKind, Features,
 };
+use libc::if_nametoindex;
 use log::{debug, warn};
 use thiserror::Error;
 
@@ -137,6 +139,7 @@ pub struct EbpfLoader<'a> {
     extensions: HashSet<&'a str>,
     verifier_log_level: VerifierLogLevel,
     allow_unsupported_maps: bool,
+    attach_ifindex: Option<u32>,
 }
 
 /// Builder style API for advanced loading of eBPF programs.
@@ -175,6 +178,7 @@ impl<'a> EbpfLoader<'a> {
             extensions: HashSet::new(),
             verifier_log_level: VerifierLogLevel::default(),
             allow_unsupported_maps: false,
+            attach_ifindex: None,
         }
     }
 
@@ -355,6 +359,27 @@ impl<'a> EbpfLoader<'a> {
         self
     }
 
+    /// Sets the interface against which to load eBPF objects, namely maps and programs.
+    ///
+    /// This is normally not required, except for some XDP hardware offloads, where devices may
+    /// require the objects to be explicitly loaded against a port.
+    ///
+    /// This is known to be required for Netronome devices.
+    ///
+    /// If you're not doing XDP hardware offload, you should not call this.
+    pub fn interface(&mut self, interface: &str) -> Result<&mut Self, EbpfError> {
+        // TODO: avoid this unwrap by adding a new error variant.
+        let c_interface = CString::new(interface).unwrap();
+        let if_index = unsafe { if_nametoindex(c_interface.as_ptr()) };
+        if if_index == 0 {
+            Err(ProgramError::UnknownInterface {
+                name: interface.to_string(),
+            })?;
+        }
+        self.attach_ifindex = Some(if_index);
+        Ok(self)
+    }
+
     /// Loads eBPF bytecode from a file.
     ///
     /// # Examples
@@ -394,6 +419,7 @@ impl<'a> EbpfLoader<'a> {
             extensions,
             verifier_log_level,
             allow_unsupported_maps,
+            attach_ifindex,
         } = self;
         let mut obj = Object::parse(data)?;
         obj.patch_map_data(globals.clone())?;
@@ -492,7 +518,7 @@ impl<'a> EbpfLoader<'a> {
             }
             let btf_fd = btf_fd.as_deref().map(|fd| fd.as_fd());
             let mut map = match obj.pinning() {
-                PinningType::None => MapData::create(obj, &name, btf_fd)?,
+                PinningType::None => MapData::create(obj, &name, btf_fd, *attach_ifindex)?,
                 PinningType::ByName => {
                     // pin maps in /sys/fs/bpf by default to align with libbpf
                     // behavior https://github.com/libbpf/libbpf/blob/v1.2.2/src/libbpf.c#L2161.
@@ -500,7 +526,7 @@ impl<'a> EbpfLoader<'a> {
                         .as_deref()
                         .unwrap_or_else(|| Path::new("/sys/fs/bpf"));
 
-                    MapData::create_pinned_by_name(path, obj, &name, btf_fd)?
+                    MapData::create_pinned_by_name(path, obj, &name, btf_fd, *attach_ifindex)?
                 }
             };
             map.finalize()?;
@@ -586,6 +612,7 @@ impl<'a> EbpfLoader<'a> {
                             if *frags {
                                 data.flags = BPF_F_XDP_HAS_FRAGS;
                             }
+                            data.attach_ifindex = *attach_ifindex;
                             Program::Xdp(Xdp {
                                 data,
                                 attach_type: *attach_type,
